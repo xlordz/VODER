@@ -1273,7 +1273,7 @@ class ProcessingThread(QThread):
 
     def __init__(self, mode, base_path=None, target_path=None, text=None, output_path=None,
                  voice_instruct=None, dialogue_data=None, voice_prompts=None, duration=None,
-                 music_description=None, assignments=None):
+                 music_description=None, assignments=None, is_music=False):
         super().__init__()
         self.mode = mode
         self.base_path = base_path
@@ -1286,6 +1286,7 @@ class ProcessingThread(QThread):
         self.duration = duration
         self.music_description = music_description
         self.assignments = assignments
+        self.is_music = is_music
         self.stt = None
         self.tts = None
         self.tts_voice_design = None
@@ -1536,50 +1537,91 @@ class ProcessingThread(QThread):
                 self.finished_signal.emit(self.output_path)
 
             elif self.mode == "seed_vc_convert":
-                self.status_signal.emit("Loading Seed-VC v2 model...")
-                self.seed_vc = SeedVCV2()
-                self.progress_signal.emit(20)
-                if self.seed_vc.model is None:
-                    self.error_signal.emit("Failed to load Seed-VC model")
-                    return
-                temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                temp_output_22k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-                try:
-                    self.status_signal.emit("Resampling inputs to 22050Hz...")
-                    waveform_base, sr_base = torchaudio.load(self.base_path)
-                    if sr_base != 22050:
-                        resampler_base = torchaudio.transforms.Resample(sr_base, 22050)
-                        waveform_base = resampler_base(waveform_base)
-                    torchaudio.save(temp_base.name, waveform_base, 22050)
-                    waveform_target, sr_target = torchaudio.load(self.target_path)
-                    if sr_target != 22050:
-                        resampler_target = torchaudio.transforms.Resample(sr_target, 22050)
-                        waveform_target = resampler_target(waveform_target)
-                    torchaudio.save(temp_target.name, waveform_target, 22050)
-                    self.progress_signal.emit(40)
-                    self.status_signal.emit("Converting voice...")
-                    success = self.seed_vc.convert(
-                        source_path=temp_base.name,
-                        reference_path=temp_target.name,
-                        output_path=temp_output_22k.name
-                    )
-                    self.progress_signal.emit(70)
-                    if success:
-                        self.status_signal.emit("Upsampling output to 44100Hz...")
-                        waveform_out, sr_out = torchaudio.load(temp_output_22k.name)
-                        if sr_out != 44100:
-                            resampler_out = torchaudio.transforms.Resample(sr_out, 44100)
-                            waveform_out = resampler_out(waveform_out)
-                        torchaudio.save(self.output_path, waveform_out, 44100)
-                        self.progress_signal.emit(90)
-                        self.finished_signal.emit(self.output_path)
-                    else:
-                        self.error_signal.emit("Voice conversion failed")
-                finally:
-                    for temp_file in [temp_base.name, temp_target.name, temp_output_22k.name]:
-                        if os.path.exists(temp_file):
-                            os.remove(temp_file)
+                if self.is_music:
+                    self.status_signal.emit("Loading Seed-VC v1 model...")
+                    self.seed_vc = SeedVCV1()
+                    self.progress_signal.emit(20)
+                    if self.seed_vc.model is None:
+                        self.error_signal.emit("Failed to load Seed-VC v1 model")
+                        return
+                    temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    temp_output_44k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    try:
+                        self.status_signal.emit("Resampling inputs to 44100Hz...")
+                        waveform_base, sr_base = torchaudio.load(self.base_path)
+                        if sr_base != 44100:
+                            resampler_base = torchaudio.transforms.Resample(sr_base, 44100)
+                            waveform_base = resampler_base(waveform_base)
+                        torchaudio.save(temp_base.name, waveform_base, 44100)
+                        waveform_target, sr_target = torchaudio.load(self.target_path)
+                        if sr_target != 44100:
+                            resampler_target = torchaudio.transforms.Resample(sr_target, 44100)
+                            waveform_target = resampler_target(waveform_target)
+                        torchaudio.save(temp_target.name, waveform_target, 44100)
+                        self.progress_signal.emit(40)
+                        self.status_signal.emit("Converting voice...")
+                        success = self.seed_vc.convert(
+                            source_path=temp_base.name,
+                            reference_path=temp_target.name,
+                            output_path=temp_output_44k.name
+                        )
+                        self.progress_signal.emit(70)
+                        if success:
+                            shutil.copy(temp_output_44k.name, self.output_path)
+                            self.progress_signal.emit(90)
+                            self.finished_signal.emit(self.output_path)
+                        else:
+                            self.error_signal.emit("Voice conversion failed")
+                    finally:
+                        for temp_file in [temp_base.name, temp_target.name, temp_output_44k.name]:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                else:
+                    self.status_signal.emit("Loading Seed-VC v2 model...")
+                    self.seed_vc = SeedVCV2()
+                    self.progress_signal.emit(20)
+                    if self.seed_vc.model is None:
+                        self.error_signal.emit("Failed to load Seed-VC model")
+                        return
+                    temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    temp_output_22k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+                    try:
+                        self.status_signal.emit("Resampling inputs to 22050Hz...")
+                        waveform_base, sr_base = torchaudio.load(self.base_path)
+                        if sr_base != 22050:
+                            resampler_base = torchaudio.transforms.Resample(sr_base, 22050)
+                            waveform_base = resampler_base(waveform_base)
+                        torchaudio.save(temp_base.name, waveform_base, 22050)
+                        waveform_target, sr_target = torchaudio.load(self.target_path)
+                        if sr_target != 22050:
+                            resampler_target = torchaudio.transforms.Resample(sr_target, 22050)
+                            waveform_target = resampler_target(waveform_target)
+                        torchaudio.save(temp_target.name, waveform_target, 22050)
+                        self.progress_signal.emit(40)
+                        self.status_signal.emit("Converting voice...")
+                        success = self.seed_vc.convert(
+                            source_path=temp_base.name,
+                            reference_path=temp_target.name,
+                            output_path=temp_output_22k.name
+                        )
+                        self.progress_signal.emit(70)
+                        if success:
+                            self.status_signal.emit("Upsampling output to 44100Hz...")
+                            waveform_out, sr_out = torchaudio.load(temp_output_22k.name)
+                            if sr_out != 44100:
+                                resampler_out = torchaudio.transforms.Resample(sr_out, 44100)
+                                waveform_out = resampler_out(waveform_out)
+                            torchaudio.save(self.output_path, waveform_out, 44100)
+                            self.progress_signal.emit(90)
+                            self.finished_signal.emit(self.output_path)
+                        else:
+                            self.error_signal.emit("Voice conversion failed")
+                    finally:
+                        for temp_file in [temp_base.name, temp_target.name, temp_output_22k.name]:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
 
             elif self.mode == "ttm_generate":
                 self.status_signal.emit("Loading ACE-Step model...")
@@ -1792,6 +1834,46 @@ class BackgroundMusicDialog(QDialog):
     def on_skip(self):
         self.result = None
         self.reject()
+
+class MusicInputDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Musical Inputs?")
+        self.setModal(True)
+        self.setMinimumWidth(350)
+        self.result_value = False
+        layout = QVBoxLayout(self)
+        label = QLabel("Are the inputs musical?")
+        label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 20px;")
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        yes_btn = QPushButton("Yes")
+        yes_btn.setStyleSheet(get_secondary_button_style())
+        yes_btn.setMinimumWidth(100)
+        yes_btn.clicked.connect(self.on_yes)
+        no_btn = QPushButton("No")
+        no_btn.setStyleSheet(get_secondary_button_style())
+        no_btn.setMinimumWidth(100)
+        no_btn.clicked.connect(self.on_no)
+        button_layout.addWidget(yes_btn)
+        button_layout.addWidget(no_btn)
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+    def on_yes(self):
+        self.result_value = True
+        self.accept()
+
+    def on_no(self):
+        self.result_value = False
+        self.reject()
+
+    def get_result(self):
+        return self.result_value
+
 
 class VODERGUI(QMainWindow):
     def __init__(self):
@@ -2719,13 +2801,19 @@ class VODERGUI(QMainWindow):
     def patch_audio_sts(self):
         if not self.base_audio_path or not self.target_audio_path:
             return
+        dialog = MusicInputDialog(self)
+        dialog.exec_()
+        is_music = dialog.get_result()
+        mode_str = "M-STS" if is_music else "STS"
         self.set_processing_state(True)
-        self.status_bar.setText("Converting voice with Seed-VC...")
+        self.status_bar.setText(f"Converting voice with Seed-VC ({mode_str})...")
         self.progress.setValue(0)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(self.results_dir, f"voder_sts_output_{timestamp}.wav")
+        output_filename = f"voder_m_sts_{timestamp}.wav" if is_music else f"voder_sts_output_{timestamp}.wav"
+        output_path = os.path.join(self.results_dir, output_filename)
         self.worker = ProcessingThread("seed_vc_convert", base_path=self.base_audio_path,
-                                       target_path=self.target_audio_path, output_path=output_path)
+                                       target_path=self.target_audio_path, output_path=output_path,
+                                       is_music=is_music)
         self.worker.progress_signal.connect(self.progress.setValue)
         self.worker.status_signal.connect(self.status_bar.setText)
         self.worker.finished_signal.connect(self.on_synthesis_finished)
@@ -3486,50 +3574,102 @@ def cli_sts_mode():
     target_path = input("Enter target voice audio path: ").strip()
     if not validate_file_exists(target_path):
         return False
-    print("\nLoading Seed-VC v2 model...")
-    seed_vc = SeedVCV2()
-    if seed_vc.model is None:
-        print("Error: Failed to load Seed-VC model")
-        return False
-    print("Resampling inputs to 22050Hz...")
-    import torchaudio
-    waveform_base, sr_base = torchaudio.load(base_path)
-    if sr_base != 22050:
-        resampler_base = torchaudio.transforms.Resample(sr_base, 22050)
-        waveform_base = resampler_base(waveform_base)
-    waveform_target, sr_target = torchaudio.load(target_path)
-    if sr_target != 22050:
-        resampler_target = torchaudio.transforms.Resample(sr_target, 22050)
-        waveform_target = resampler_target(waveform_target)
-    temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-    temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-    temp_output_22k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-    try:
-        torchaudio.save(temp_base.name, waveform_base, 22050)
-        torchaudio.save(temp_target.name, waveform_target, 22050)
-        print("Converting voice...")
-        success = seed_vc.convert(
-            source_path=temp_base.name,
-            reference_path=temp_target.name,
-            output_path=temp_output_22k.name
-        )
-        if not success:
-            print("Error: Voice conversion failed")
+    print()
+    while True:
+        music_input = input("Are the inputs musical? (Y/N): ").strip().lower()
+        if music_input in ['y', 'yes']:
+            is_music = True
+            break
+        elif music_input in ['n', 'no']:
+            is_music = False
+            break
+        else:
+            print("Please enter Y or N")
+    if is_music:
+        print("\nLoading Seed-VC v1 model (44.1kHz)...")
+        seed_vc = SeedVCV1()
+        if seed_vc.model is None:
+            print("Error: Failed to load Seed-VC v1 model")
             return False
-        print("Upsampling output to 44100Hz...")
-        waveform_out, sr_out = torchaudio.load(temp_output_22k.name)
-        if sr_out != 44100:
-            resampler_out = torchaudio.transforms.Resample(sr_out, 44100)
-            waveform_out = resampler_out(waveform_out)
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(results_dir, f"voder_sts_{timestamp}.wav")
-        torchaudio.save(output_path, waveform_out, 44100)
-        print(f"\n✓ Success! Output saved to: {output_path}")
-        return True
-    finally:
-        for temp_file in [temp_base.name, temp_target.name, temp_output_22k.name]:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        print("Resampling inputs to 44100Hz...")
+        import torchaudio
+        waveform_base, sr_base = torchaudio.load(base_path)
+        if sr_base != 44100:
+            resampler_base = torchaudio.transforms.Resample(sr_base, 44100)
+            waveform_base = resampler_base(waveform_base)
+        waveform_target, sr_target = torchaudio.load(target_path)
+        if sr_target != 44100:
+            resampler_target = torchaudio.transforms.Resample(sr_target, 44100)
+            waveform_target = resampler_target(waveform_target)
+        temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_output_44k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        try:
+            torchaudio.save(temp_base.name, waveform_base, 44100)
+            torchaudio.save(temp_target.name, waveform_target, 44100)
+            print("Converting voice...")
+            success = seed_vc.convert(
+                source_path=temp_base.name,
+                reference_path=temp_target.name,
+                output_path=temp_output_44k.name
+            )
+            if not success:
+                print("Error: Voice conversion failed")
+                return False
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(results_dir, f"voder_m_sts_{timestamp}.wav")
+            shutil.copy(temp_output_44k.name, output_path)
+            print(f"\n✓ Success! Output saved to: {output_path}")
+            return True
+        finally:
+            for temp_file in [temp_base.name, temp_target.name, temp_output_44k.name]:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+    else:
+        print("\nLoading Seed-VC v2 model...")
+        seed_vc = SeedVCV2()
+        if seed_vc.model is None:
+            print("Error: Failed to load Seed-VC model")
+            return False
+        print("Resampling inputs to 22050Hz...")
+        import torchaudio
+        waveform_base, sr_base = torchaudio.load(base_path)
+        if sr_base != 22050:
+            resampler_base = torchaudio.transforms.Resample(sr_base, 22050)
+            waveform_base = resampler_base(waveform_base)
+        waveform_target, sr_target = torchaudio.load(target_path)
+        if sr_target != 22050:
+            resampler_target = torchaudio.transforms.Resample(sr_target, 22050)
+            waveform_target = resampler_target(waveform_target)
+        temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_output_22k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        try:
+            torchaudio.save(temp_base.name, waveform_base, 22050)
+            torchaudio.save(temp_target.name, waveform_target, 22050)
+            print("Converting voice...")
+            success = seed_vc.convert(
+                source_path=temp_base.name,
+                reference_path=temp_target.name,
+                output_path=temp_output_22k.name
+            )
+            if not success:
+                print("Error: Voice conversion failed")
+                return False
+            print("Upsampling output to 44100Hz...")
+            waveform_out, sr_out = torchaudio.load(temp_output_22k.name)
+            if sr_out != 44100:
+                resampler_out = torchaudio.transforms.Resample(sr_out, 44100)
+                waveform_out = resampler_out(waveform_out)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(results_dir, f"voder_sts_{timestamp}.wav")
+            torchaudio.save(output_path, waveform_out, 44100)
+            print(f"\n✓ Success! Output saved to: {output_path}")
+            return True
+        finally:
+            for temp_file in [temp_base.name, temp_target.name, temp_output_22k.name]:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
 
 def cli_ttm_mode():
     original_cwd = os.getcwd()
@@ -3688,7 +3828,7 @@ def parse_oneline_args(args):
     if not args:
         return {'error': 'No arguments provided'}
     mode = args[0].lower()
-    result = {'mode': mode, 'params': {}, 'error': None}
+    result = {'mode': mode, 'params': {}, 'error': None, 'is_music': False}
     valid_keywords = ['script', 'voice', 'lyrics', 'styling', 'base', 'target', 'music', 'duration']
     i = 1
     current_keyword = None
@@ -3715,13 +3855,20 @@ def parse_oneline_args(args):
                 result['params'][current_keyword].append(arg)
                 i += 1
         else:
-            try:
-                duration = int(arg)
-                result['params']['duration'] = duration
+            if mode == 'sts' and arg_lower == 'music':
+                result['is_music'] = True
                 i += 1
-            except ValueError:
-                result['error'] = f'Unknown parameter: {arg}'
-                return result
+            else:
+                try:
+                    duration = int(arg)
+                    result['params']['duration'] = duration
+                    i += 1
+                except ValueError:
+                    if mode == 'sts':
+                        result['error'] = f'invalid parameter "{arg}" only next parameter should be music or empty'
+                    else:
+                        result['error'] = f'Unknown parameter: {arg}'
+                    return result
     return result
 
 def is_num(s):
@@ -3757,6 +3904,7 @@ def show_oneline_usage():
     print('  python voder.py tts script "hello world" voice "male voice"')
     print('  python voder.py tts+vc script "hello" target "voice.wav"')
     print('  python voder.py sts base "input.wav" target "voice.wav"')
+    print('  python voder.py sts base "input.wav" target "voice.wav" music')
     print('  python voder.py ttm lyrics "song" styling "pop" 30')
     print('  python voder.py ttm+vc lyrics "song" styling "pop" 30 target "voice.wav"')
     print()
@@ -3772,12 +3920,14 @@ def show_oneline_usage():
     print("  lyrics   - Song lyrics for TTM (single)")
     print("  styling  - Style prompt for TTM (single)")
     print("  base     - Base audio/video path")
-    print("  music    - Music description for background music (dialogue only)")
+    print("  music    - Music flag for STS mode (uses 44.1kHz v1 model)")
     print("  <number> - Duration in seconds (10-300, for TTM modes)")
 
 def execute_oneline_command(parsed):
     mode = parsed['mode']
     params = parsed['params']
+    if 'is_music' in parsed:
+        params['is_music'] = parsed['is_music']
     if mode == 'tts':
         return oneline_tts(params)
     elif mode == 'tts+vc':
@@ -4300,6 +4450,8 @@ def oneline_sts(params):
     results_dir = os.path.join(original_cwd, "results")
     os.makedirs(results_dir, exist_ok=True)
 
+    is_music = params.get('is_music', False)
+
     if 'base' not in params or len(params['base']) != 1:
         print("Error: STS mode requires exactly one 'base' parameter")
         return False
@@ -4324,50 +4476,91 @@ def oneline_sts(params):
             print("Error: Could not extract audio from video")
             return False
         base_path = audio_path
-    print("Loading Seed-VC v2 model...")
-    seed_vc = SeedVCV2()
-    if seed_vc.model is None:
-        print("Error: Failed to load Seed-VC model")
-        return False
-    print("Resampling inputs to 22050Hz...")
-    import torchaudio
-    waveform_base, sr_base = torchaudio.load(base_path)
-    if sr_base != 22050:
-        resampler_base = torchaudio.transforms.Resample(sr_base, 22050)
-        waveform_base = resampler_base(waveform_base)
-    waveform_target, sr_target = torchaudio.load(target_path)
-    if sr_target != 22050:
-        resampler_target = torchaudio.transforms.Resample(sr_target, 22050)
-        waveform_target = resampler_target(waveform_target)
-    temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-    temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-    temp_output_22k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-    try:
-        torchaudio.save(temp_base.name, waveform_base, 22050)
-        torchaudio.save(temp_target.name, waveform_target, 22050)
-        print("Converting voice...")
-        success = seed_vc.convert(
-            source_path=temp_base.name,
-            reference_path=temp_target.name,
-            output_path=temp_output_22k.name
-        )
-        if not success:
-            print("Error: Voice conversion failed")
+    if is_music:
+        print("\nLoading Seed-VC v1 model (44.1kHz)...")
+        seed_vc = SeedVCV1()
+        if seed_vc.model is None:
+            print("Error: Failed to load Seed-VC v1 model")
             return False
-        print("Upsampling output to 44100Hz...")
-        waveform_out, sr_out = torchaudio.load(temp_output_22k.name)
-        if sr_out != 44100:
-            resampler_out = torchaudio.transforms.Resample(sr_out, 44100)
-            waveform_out = resampler_out(waveform_out)
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(results_dir, f"voder_sts_{timestamp}.wav")
-        torchaudio.save(output_path, waveform_out, 44100)
-        print(f"✓ Success! Output saved to: {output_path}")
-        return True
-    finally:
-        for temp_file in [temp_base.name, temp_target.name, temp_output_22k.name]:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        print("Resampling inputs to 44100Hz...")
+        import torchaudio
+        waveform_base, sr_base = torchaudio.load(base_path)
+        if sr_base != 44100:
+            resampler_base = torchaudio.transforms.Resample(sr_base, 44100)
+            waveform_base = resampler_base(waveform_base)
+        waveform_target, sr_target = torchaudio.load(target_path)
+        if sr_target != 44100:
+            resampler_target = torchaudio.transforms.Resample(sr_target, 44100)
+            waveform_target = resampler_target(waveform_target)
+        temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_output_44k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        try:
+            torchaudio.save(temp_base.name, waveform_base, 44100)
+            torchaudio.save(temp_target.name, waveform_target, 44100)
+            print("Converting voice...")
+            success = seed_vc.convert(
+                source_path=temp_base.name,
+                reference_path=temp_target.name,
+                output_path=temp_output_44k.name
+            )
+            if not success:
+                print("Error: Voice conversion failed")
+                return False
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(results_dir, f"voder_m_sts_{timestamp}.wav")
+            shutil.copy(temp_output_44k.name, output_path)
+            print(f"✓ Success! Output saved to: {output_path}")
+            return True
+        finally:
+            for temp_file in [temp_base.name, temp_target.name, temp_output_44k.name]:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+    else:
+        print("Loading Seed-VC v2 model...")
+        seed_vc = SeedVCV2()
+        if seed_vc.model is None:
+            print("Error: Failed to load Seed-VC model")
+            return False
+        print("Resampling inputs to 22050Hz...")
+        import torchaudio
+        waveform_base, sr_base = torchaudio.load(base_path)
+        if sr_base != 22050:
+            resampler_base = torchaudio.transforms.Resample(sr_base, 22050)
+            waveform_base = resampler_base(waveform_base)
+        waveform_target, sr_target = torchaudio.load(target_path)
+        if sr_target != 22050:
+            resampler_target = torchaudio.transforms.Resample(sr_target, 22050)
+            waveform_target = resampler_target(waveform_target)
+        temp_base = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_target = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_output_22k = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        try:
+            torchaudio.save(temp_base.name, waveform_base, 22050)
+            torchaudio.save(temp_target.name, waveform_target, 22050)
+            print("Converting voice...")
+            success = seed_vc.convert(
+                source_path=temp_base.name,
+                reference_path=temp_target.name,
+                output_path=temp_output_22k.name
+            )
+            if not success:
+                print("Error: Voice conversion failed")
+                return False
+            print("Upsampling output to 44100Hz...")
+            waveform_out, sr_out = torchaudio.load(temp_output_22k.name)
+            if sr_out != 44100:
+                resampler_out = torchaudio.transforms.Resample(sr_out, 44100)
+                waveform_out = resampler_out(waveform_out)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(results_dir, f"voder_sts_{timestamp}.wav")
+            torchaudio.save(output_path, waveform_out, 44100)
+            print(f"✓ Success! Output saved to: {output_path}")
+            return True
+        finally:
+            for temp_file in [temp_base.name, temp_target.name, temp_output_22k.name]:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
 
 def oneline_ttm(params):
     original_cwd = os.getcwd()
